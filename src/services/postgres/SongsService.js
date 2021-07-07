@@ -26,7 +26,7 @@ class SongsService {
       throw new InvariantError('Lagu gagal ditambahkan');
     }
 
-    return id;
+    return result.rows[0].id;
   }
 
   async getSongs() {
