@@ -1,11 +1,13 @@
+/* eslint-disable camelcase */
 const { Pool } = require('pg');
 const { nanoid } = require('nanoid');
 const InvariantError = require('../../exceptions/InvariantError');
 const NotFoundError = require('../../exceptions/NotFoundError');
 
 class PlayListSongsService {
-  constructor() {
+  constructor(cacheService) {
     this._pool = new Pool();
+    this._cacheService = cacheService;
   }
 
   async addPlayListSong({ playlistId, songId }) {
@@ -21,25 +23,34 @@ class PlayListSongsService {
     if (!result.rows[0].id) {
       throw new InvariantError('Lagu gagal ditambahkan ke PlayList');
     }
+
+    await this._cacheService.delete(`playlistsongs:${playlistId}`);
   }
 
   async getPlayListSongs(playlistId) {
-    const query = {
-      text: `SELECT songs.id AS "id", songs.title AS "title", songs.performer AS "performer" 
-      FROM songs
-      INNER JOIN playlistsongs ON songs.id = playlistsongs.song_id
-      WHERE playlistsongs.playlist_id = $1`,
-      values: [playlistId],
-    };
+    try {
+      const result = await this._cacheService.get(`playlistsongs:${playlistId}`);
+      return JSON.parse(result);
+    } catch (error) {
+      const query = {
+        text: `SELECT songs.id AS "id", songs.title AS "title", songs.performer AS "performer" 
+        FROM songs
+        INNER JOIN playlistsongs ON songs.id = playlistsongs.song_id
+        WHERE playlistsongs.playlist_id = $1`,
+        values: [playlistId],
+      };
 
-    const result = await this._pool.query(query);
+      const result = await this._pool.query(query);
 
-    return result.rows;
+      await this._cacheService.set(`playlistsongs:${playlistId}`, JSON.stringify(result.rows));
+
+      return result.rows;
+    }
   }
 
   async deletePlayListSongById(id) {
     const query = {
-      text: 'DELETE FROM playlistsongs WHERE id = $1 RETURNING id',
+      text: 'DELETE FROM playlistsongs WHERE id = $1 RETURNING id, playlist_id',
       values: [id],
     };
 
@@ -48,6 +59,9 @@ class PlayListSongsService {
     if (!result.rowCount) {
       throw new NotFoundError('PlayListSong gagal dihapus. Id tidak ditemukan');
     }
+
+    const { playlist_id } = result.rows[0];
+    await this._cacheService.delete(`playlistsongs:${playlist_id}`);
   }
 
   async verifyPlayListSong(playlistId, songId) {
